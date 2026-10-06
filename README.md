@@ -16,6 +16,8 @@
 
 # mysql-mysqldump-show-tables-overflow
 
+**Class:** Crash
+
 **MySQL Community Server** `mysqldump` `26.7.0` (`06a5c1c`) - Oracle
 
 Default `mysqldump` copies `SHOW TABLES` names with no `NAME_LEN` cap. `getTableName` returns a raw `mysql_fetch_row`. `dump_all_tables_in_db` `my_stpcpy`s that string into `hash_key[2*NAME_LEN+2]` and `quote_name` writes it into a 387-byte stack buffer with no bound. A hostile server that answers a table name longer than 192 bytes crashes the dump UID.
@@ -25,6 +27,7 @@ A real `mysqld` will not emit identifiers that long. The leftover is the client 
 | | |
 |---|---|
 | ID | no CVE yet |
+| Class | **Crash** (client SIGSEGV; not demonstrated RCE) |
 | CWE | [CWE-120](https://cwe.mitre.org/data/definitions/120.html), [CWE-121](https://cwe.mitre.org/data/definitions/121.html) |
 | CVSS | **High: 8.8** `CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H` |
 | Product | [MySQL Community Server](https://github.com/mysql/mysql-server) `mysqldump` |
