@@ -17,6 +17,7 @@
 # mysql-mysqldump-show-tables-overflow
 
 **Class:** Crash
+**Reach:** Remote
 
 **MySQL Community Server** `mysqldump` `26.7.0` (`06a5c1c`) - Oracle
 
@@ -28,6 +29,7 @@ A real `mysqld` will not emit identifiers that long. The leftover is the client 
 |---|---|
 | ID | no CVE yet |
 | Class | **Crash** (client SIGSEGV; not demonstrated RCE) |
+| Reach | **Remote** (victim runs `mysqldump` against an attacker MySQL; UI:R) |
 | CWE | [CWE-120](https://cwe.mitre.org/data/definitions/120.html), [CWE-121](https://cwe.mitre.org/data/definitions/121.html) |
 | CVSS | **High: 8.8** `CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H` |
 | Product | [MySQL Community Server](https://github.com/mysql/mysql-server) `mysqldump` |
