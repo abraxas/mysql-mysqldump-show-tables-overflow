@@ -226,26 +226,75 @@ _builtins.print = _cprint
 
 """Prove mysqldump 26.7.0 stack overflow on a hostile SHOW TABLES name."""
 
-
 import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 
 WITNESS = "MYSQL-DUMP-SHOW-TABLES-OVERFLOW-WITNESS"
 LABEL = "mysql-mysqldump-show-tables-overflow"
-COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", LABEL)
-HERE = os.path.dirname(os.path.abspath(__file__))
 IMAGE_TAG = "mysql:26.7.0"
-DUMP_TIMEOUT = 25
-FATAL_SIGNALS = {4: "SIGILL", 6: "SIGABRT", 7: "SIGBUS", 11: "SIGSEGV"}
+DUMP_VERSION = "26.7.0"
+COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", LABEL)
+HERE = Path(__file__).resolve().parent
+DUMP_TIMEOUT_SEC = 25
+COMPOSE_TIMEOUT_SEC = 60
+VERSION_TIMEOUT_SEC = 30
+LOGS_TIMEOUT_SEC = 30
+CONTROL_PORT = 3306
+OVERFLOW_PORT = 3307
+DUMP_SERVICE = "dump"
+STUB_SERVICE = "stub"
+STUB_HOST = "stub"
+DUMP_USER = "root"
+DUMP_DB = "testdb"
+STDERR_TAIL = 1500
+STDOUT_HEAD = 400
+QUERY_TAIL = 80
+EXIT_SIGNAL_BASE = 128
+SIGILL = 4
+SIGABRT = 6
+SIGBUS = 7
+SIGSEGV = 11
+FATAL_SIGNALS: dict[int, str] = {
+    SIGILL: "SIGILL",
+    SIGABRT: "SIGABRT",
+    SIGBUS: "SIGBUS",
+    SIGSEGV: "SIGSEGV",
+}
+RE_SHOW_TABLES = re.compile(r"show\s+tables", re.I)
+
+
+@dataclass(frozen=True)
+class DumpRun:
+    rc: int | None
+    stdout: str
+    stderr: str
+    signal: str
+    crashed: bool
+    why: str
 
 
 def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def compose(*args: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+def fail(reason: str) -> None:
+    log(f"FAIL {LABEL} {reason} {WITNESS}")
+    raise SystemExit(1)
+
+
+def as_text(data: str | bytes | None) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", "replace")
+    return data
+
+
+def compose(*args: str, timeout: int = COMPOSE_TIMEOUT_SEC) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["docker", "compose", "-p", COMPOSE_PROJECT, *args],
         cwd=HERE,
@@ -256,13 +305,12 @@ def compose(*args: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
 
 
 def dump_version() -> str:
-    proc = compose("exec", "-T", "dump", "mysqldump", "--version", timeout=30)
+    proc = compose("exec", "-T", DUMP_SERVICE, "mysqldump", "--version", timeout=VERSION_TIMEOUT_SEC)
     text = ((proc.stdout or "") + (proc.stderr or "")).strip()
     log(f"mysqldump-version rc={proc.returncode} text={text!r}")
-    if proc.returncode != 0 or "26.7.0" not in text:
-        log(f"FAIL {LABEL} dump-version-mismatch image={IMAGE_TAG} {text!r} {WITNESS}")
-        raise SystemExit(1)
-    return text.splitlines()[-1] if text else "mysqldump 26.7.0"
+    if proc.returncode != 0 or DUMP_VERSION not in text:
+        fail(f"dump-version-mismatch image={IMAGE_TAG} {text!r}")
+    return text.splitlines()[-1] if text else f"mysqldump {DUMP_VERSION}"
 
 
 def classify(rc: int | None, stderr: str, stdout: str) -> tuple[str, bool, str]:
@@ -280,14 +328,14 @@ def classify(rc: int | None, stderr: str, stdout: str) -> tuple[str, bool, str]:
         sig = -rc
         name = FATAL_SIGNALS.get(sig, f"SIG{sig}")
         return name, sig in FATAL_SIGNALS, f"wait-signal-{sig}"
-    if rc >= 128:
-        sig = rc - 128
+    if rc >= EXIT_SIGNAL_BASE:
+        sig = rc - EXIT_SIGNAL_BASE
         name = FATAL_SIGNALS.get(sig, f"SIG{sig}")
         return name, sig in FATAL_SIGNALS, f"exit-{rc}"
     return "0", False, f"exit-{rc}"
 
 
-def run_dump(port: int, label: str) -> tuple[int | None, str, str]:
+def run_dump(port: int, label: str) -> DumpRun:
     cmd = [
         "docker",
         "compose",
@@ -295,18 +343,18 @@ def run_dump(port: int, label: str) -> tuple[int | None, str, str]:
         COMPOSE_PROJECT,
         "exec",
         "-T",
-        "dump",
+        DUMP_SERVICE,
         "mysqldump",
         "--protocol=TCP",
         "--ssl-mode=DISABLED",
         "-h",
-        "stub",
+        STUB_HOST,
         "-P",
         str(port),
         "-u",
-        "root",
+        DUMP_USER,
         "--password=",
-        "testdb",
+        DUMP_DB,
     ]
     log(f"run-{label} port={port} cmd={' '.join(cmd)}")
     try:
@@ -315,54 +363,62 @@ def run_dump(port: int, label: str) -> tuple[int | None, str, str]:
             cwd=HERE,
             text=True,
             capture_output=True,
-            timeout=DUMP_TIMEOUT,
+            timeout=DUMP_TIMEOUT_SEC,
         )
-        return proc.returncode, proc.stdout or "", proc.stderr or ""
+        rc: int | None = proc.returncode
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
     except subprocess.TimeoutExpired as exc:
-        out = exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        err = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-        return None, out, err + "\nTIMEOUT"
+        rc = None
+        stdout = as_text(exc.stdout)
+        stderr = as_text(exc.stderr) + "\nTIMEOUT"
+    signal, crashed, why = classify(rc, stderr, stdout)
+    return DumpRun(rc, stdout, stderr, signal, crashed, why)
 
 
 def stub_queries() -> str:
-    proc = compose("logs", "--no-color", "stub", timeout=30)
+    proc = compose("logs", "--no-color", STUB_SERVICE, timeout=LOGS_TIMEOUT_SEC)
     text = (proc.stdout or "") + (proc.stderr or "")
-    queries = []
+    queries: list[str] = []
     for line in text.splitlines():
         if line.startswith("query ") or " sql=" in line or line.startswith("init_db "):
             queries.append(line)
-    return "\n".join(queries[-80:])
+    return "\n".join(queries[-QUERY_TAIL:])
 
 
 def main() -> int:
     version = dump_version()
     log(f"ioc image={IMAGE_TAG} dump={version}")
 
-    c_rc, c_out, c_err = run_dump(3306, "control")
-    c_sig, c_crash, c_why = classify(c_rc, c_err, c_out)
-    log(f"ioc control-rc={c_rc!s} control-signal={c_sig} crash={c_crash} why={c_why}")
-    log(f"ioc control-stderr={c_err[-1500:]!r}")
-    log(f"ioc control-stdout-head={c_out[:400]!r}")
+    control = run_dump(CONTROL_PORT, "control")
+    log(
+        f"ioc control-rc={control.rc!s} control-signal={control.signal} "
+        f"crash={control.crashed} why={control.why}"
+    )
+    log(f"ioc control-stderr={control.stderr[-STDERR_TAIL:]!r}")
+    log(f"ioc control-stdout-head={control.stdout[:STDOUT_HEAD]!r}")
 
-    o_rc, o_out, o_err = run_dump(3307, "overflow")
-    o_sig, o_crash, o_why = classify(o_rc, o_err, o_out)
-    log(f"ioc overflow-rc={o_rc!s} overflow-signal={o_sig} crash={o_crash} why={o_why}")
-    log(f"ioc overflow-stderr={o_err[-1500:]!r}")
-    log(f"ioc overflow-stdout-head={o_out[:400]!r}")
+    overflow = run_dump(OVERFLOW_PORT, "overflow")
+    log(
+        f"ioc overflow-rc={overflow.rc!s} overflow-signal={overflow.signal} "
+        f"crash={overflow.crashed} why={overflow.why}"
+    )
+    log(f"ioc overflow-stderr={overflow.stderr[-STDERR_TAIL:]!r}")
+    log(f"ioc overflow-stdout-head={overflow.stdout[:STDOUT_HEAD]!r}")
 
     queries = stub_queries()
     log("ioc stub-queries-tail <<<")
     log(queries if queries else "(none)")
     log("ioc stub-queries-tail >>>")
-    saw_show_tables = bool(re.search(r"show\s+tables", queries, re.I))
+    saw_show_tables = bool(RE_SHOW_TABLES.search(queries))
     log(f"ioc saw-show-tables={saw_show_tables}")
 
-    ok = (not c_crash) and o_crash and saw_show_tables
+    ok = (not control.crashed) and overflow.crashed and saw_show_tables
     status = "SUCCESS" if ok else "FAIL"
     detail = (
-        f"{LABEL} control-signal={c_sig} overflow-signal={o_sig} "
-        f"dump=26.7.0 image={IMAGE_TAG} control-rc={c_rc!s} overflow-rc={o_rc!s} "
-        f"show-tables={saw_show_tables}"
+        f"{LABEL} control-signal={control.signal} overflow-signal={overflow.signal} "
+        f"dump={DUMP_VERSION} image={IMAGE_TAG} control-rc={control.rc!s} "
+        f"overflow-rc={overflow.rc!s} show-tables={saw_show_tables}"
     )
     log(f"{status} {detail} {WITNESS}")
     return 0 if ok else 1

@@ -48,7 +48,7 @@ Same victim model as a backup client pointed at a malicious server. `lock_tables
 
 ## How I found it
 
-Thirty-one source hunts of [mysql/mysql-server](https://github.com/mysql/mysql-server) tag `mysql-26.7.0`. Default `mysqld` unpublished Crit/High came back empty. July 2026 CPU High Server rows are closed on this pin. Client tools were the leftover class, same shape as PostgreSQL `pg_basebackup` following a hostile path.
+I ran thirty-one source hunts of https://github.com/mysql/mysql-server tag https://github.com/mysql/mysql-server/tree/mysql-26.7.0. Default `mysqld` unpublished Crit/High came back empty. July 2026 CPU High Server rows are closed on this pin. Client tools were the leftover class, same shape as PostgreSQL `pg_basebackup` following a hostile path.
 
 ```c
 static char *getTableName(int reset) {
@@ -99,7 +99,7 @@ Cap `getTableName` at `NAME_LEN`. Give `quote_name` a buffer length and refuse t
 
 ## References
 
-- [github.com/mysql/mysql-server](https://github.com/mysql/mysql-server) tag [mysql-26.7.0](https://github.com/mysql/mysql-server/tree/mysql-26.7.0) (`06a5c1c99c377fc41b2eba1ea244e8b220bdc3c8`)
-- [`client/mysqldump.cc`](https://github.com/mysql/mysql-server/blob/mysql-26.7.0/client/mysqldump.cc) `getTableName`, `quote_name`, `dump_all_tables_in_db`
-- [`include/mysql_com.h`](https://github.com/mysql/mysql-server/blob/mysql-26.7.0/include/mysql_com.h) `NAME_LEN`
-- [`libmysql/libmysql.cc`](https://github.com/mysql/mysql-server/blob/mysql-26.7.0/libmysql/libmysql.cc) `mysql_list_tables`
+- https://github.com/mysql/mysql-server tag https://github.com/mysql/mysql-server/tree/mysql-26.7.0 (`06a5c1c99c377fc41b2eba1ea244e8b220bdc3c8`)
+- https://github.com/mysql/mysql-server/blob/mysql-26.7.0/client/mysqldump.cc `getTableName`, `quote_name`, `dump_all_tables_in_db`
+- https://github.com/mysql/mysql-server/blob/mysql-26.7.0/include/mysql_com.h `NAME_LEN`
+- https://github.com/mysql/mysql-server/blob/mysql-26.7.0/libmysql/libmysql.cc `mysql_list_tables`

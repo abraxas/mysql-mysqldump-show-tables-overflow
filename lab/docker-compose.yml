@@ -11,6 +11,7 @@ services:
       BIND_HOST: "0.0.0.0"
       CONTROL_PORT: "3306"
       OVERFLOW_PORT: "3307"
+      # 4KiB is absorbed by real_columns[MAX_FIELDS] on the same frame as hash_key.
       OVERFLOW_BYTES: "65536"
       WITNESS: "MYSQL-DUMP-SHOW-TABLES-OVERFLOW-WITNESS"
     ports:

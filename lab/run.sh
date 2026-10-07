@@ -4,9 +4,32 @@ cd "$(dirname "$0")"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-mysql-mysqldump-show-tables-overflow}"
 export PYTHONUNBUFFERED=1
 
+LABEL="mysql-mysqldump-show-tables-overflow"
+WITNESS="MYSQL-DUMP-SHOW-TABLES-OVERFLOW-WITNESS"
+
 down() {
   echo "== docker compose down -v =="
   docker compose -p "${COMPOSE_PROJECT_NAME}" down -v --remove-orphans || true
+}
+
+wait_ready() {
+  local i
+  echo "== wait for stub TCP 127.0.0.1:18600 and 18601 =="
+  for i in $(seq 1 60); do
+    if python3 - <<'PY'
+import socket
+for port in (18600, 18601):
+    s = socket.create_connection(("127.0.0.1", port), 2)
+    s.close()
+PY
+    then
+      echo "stub-ready attempt=${i}"
+      return 0
+    fi
+    echo "stub-wait attempt=${i}"
+    sleep 1
+  done
+  return 1
 }
 
 echo "== docker compose down (clean) =="
@@ -24,30 +47,13 @@ for attempt in $(seq 1 5); do
   down
 done
 if [[ "${up_ok}" != 1 ]]; then
-  echo "FAIL mysql-mysqldump-show-tables-overflow compose-up-failed MYSQL-DUMP-SHOW-TABLES-OVERFLOW-WITNESS" | tee poc-last-run.txt
+  echo "FAIL ${LABEL} compose-up-failed ${WITNESS}" | tee poc-last-run.txt
   down
   exit 1
 fi
 
-echo "== wait for stub TCP 127.0.0.1:18600 and 18601 =="
-ok=0
-for i in $(seq 1 60); do
-  if python3 - <<'PY'
-import socket
-for port in (18600, 18601):
-    s = socket.create_connection(("127.0.0.1", port), 2)
-    s.close()
-PY
-  then
-    ok=1
-    echo "stub-ready attempt=${i}"
-    break
-  fi
-  echo "stub-wait attempt=${i}"
-  sleep 1
-done
-if [[ "${ok}" != 1 ]]; then
-  echo "FAIL mysql-mysqldump-show-tables-overflow stub-not-ready MYSQL-DUMP-SHOW-TABLES-OVERFLOW-WITNESS" | tee poc-last-run.txt
+if ! wait_ready; then
+  echo "FAIL ${LABEL} stub-not-ready ${WITNESS}" | tee poc-last-run.txt
   docker compose -p "${COMPOSE_PROJECT_NAME}" logs --tail=80 || true
   down
   exit 1
@@ -60,7 +66,7 @@ rc=${PIPESTATUS[0]}
 set -e
 
 if ! tail -n1 poc-last-run.txt 2>/dev/null | grep -qE '^(SUCCESS|FAIL) '; then
-  echo "FAIL mysql-mysqldump-show-tables-overflow poc-exit=${rc} MYSQL-DUMP-SHOW-TABLES-OVERFLOW-WITNESS" >> poc-last-run.txt
+  echo "FAIL ${LABEL} poc-exit=${rc} ${WITNESS}" >> poc-last-run.txt
   rc=1
 fi
 
