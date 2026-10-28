@@ -13,6 +13,10 @@
   &nbsp;·&nbsp;
   <a href="https://github.com/abraxas/mysql-mysqldump-show-tables-overflow">mysql-mysqldump-show-tables-overflow</a>
 </p>
+<p align="center">
+  Write-up: <a href="https://abraxaslabs.tech/research/mysql-mysqldump-show-tables-overflow"><strong>https://abraxaslabs.tech/research/mysql-mysqldump-show-tables-overflow</strong></a>
+</p>
+
 
 # mysql-mysqldump-show-tables-overflow
 
